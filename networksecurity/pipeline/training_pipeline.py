@@ -25,6 +25,7 @@ from networksecurity.entity.artifact_entity import (
 )
 
 from networksecurity.Constant.training_pipeline import TRAINING_BUCKET_NAME
+from networksecurity.cloud.s3_syncer import S3Sync
 from networksecurity.Constant.training_pipeline import SAVED_MODEL_DIR
 import sys
 
@@ -32,8 +33,9 @@ import sys
 class TrainingPipeline:
     def __init__(self):
         self.training_pipeline_config=training_pipeline_config()
-        
-        
+        self.s3_sync = S3Sync()
+
+
 
     def start_data_ingestion(self):
         try:
