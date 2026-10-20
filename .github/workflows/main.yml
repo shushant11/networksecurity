@@ -143,12 +143,8 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_REGION: ${{ secrets.AWS_REGION }}
-          DAGSHUB_USER_TOKEN: ${{ secrets.DAGSHUB_USER_TOKEN }}
         run: |
           set -e
-
-          echo "Removing old container if it exists..."
-          docker rm -f networksecurity || true
 
           echo "Starting application container..."
 
@@ -160,9 +156,19 @@ jobs:
             -e AWS_ACCESS_KEY_ID \
             -e AWS_SECRET_ACCESS_KEY \
             -e AWS_REGION \
-            -e MLFLOW_TRACKING_USERNAME=shushant11 \
-            -e MLFLOW_TRACKING_PASSWORD="$DAGSHUB_USER_TOKEN" \
-            -e DAGSHUB_USER_TOKEN="$DAGSHUB_USER_TOKEN" \
+            
             "$IMAGE_URI"
 
           echo "Container started successfully."
+
+      - name: Verify Container
+        run: |
+          docker ps --filter "name=networksecurity"
+
+          echo "Recent container logs:"
+          docker logs --tail 50 networksecurity
+
+      - name: Clean Up Unused Docker Images
+        if: success()
+        run: |
+          docker image prune -f
