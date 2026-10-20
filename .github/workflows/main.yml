@@ -53,28 +53,47 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      - name: Validate ECR Configuration
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_NAME }}
+        run: |
+          set -e
+
+          if [ -z "$ECR_REGISTRY" ]; then
+            echo "ERROR: ECR registry is empty."
+            exit 1
+          fi
+
+          if [ -z "$ECR_REPOSITORY" ]; then
+            echo "ERROR: ECR_REPOSITORY_NAME secret is empty."
+            exit 1
+          fi
+
+          echo "ECR configuration validated."
+
       - name: Build, Tag, and Push Docker Image
         id: build-image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_NAME }}
           IMAGE_TAG: latest
-
         run: |
           set -e
 
+          IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
           echo "Building Docker image..."
 
-          docker build \
-            -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" .
+          docker build -t "$IMAGE_URI" .
 
           echo "Pushing Docker image to Amazon ECR..."
 
-          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          docker push "$IMAGE_URI"
 
           echo "Docker image pushed successfully."
 
-          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+          echo "image=$IMAGE_URI" >> "$GITHUB_OUTPUT"
 
 
   # ==========================================
@@ -107,7 +126,12 @@ jobs:
         run: |
           set -e
 
-          echo "Checking AWS account..."
+          if [ -z "$ECR_REPOSITORY" ]; then
+            echo "ERROR: ECR_REPOSITORY_NAME secret is empty."
+            exit 1
+          fi
+
+          echo "Verifying AWS identity..."
           aws sts get-caller-identity
 
           echo "Checking whether the latest image exists..."
@@ -117,6 +141,8 @@ jobs:
             --image-ids imageTag=latest \
             --region "$AWS_REGION"
 
+          echo "ECR image verified."
+
       - name: Pull Latest Docker Image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
@@ -124,45 +150,73 @@ jobs:
         run: |
           set -e
 
+          if [ -z "$ECR_REGISTRY" ] || [ -z "$ECR_REPOSITORY" ]; then
+            echo "ERROR: ECR registry or repository is empty."
+            exit 1
+          fi
+
           IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:latest"
 
-          echo "Pulling image from Amazon ECR..."
+          echo "Pulling image: $IMAGE_URI"
 
           docker pull "$IMAGE_URI"
 
-          echo "Image pulled successfully."
-
           echo "IMAGE_URI=$IMAGE_URI" >> "$GITHUB_ENV"
+
+          echo "Image pulled successfully."
 
       - name: Stop and Remove Previous Container
         run: |
-          docker rm -f networksecurity 2>/dev/null || true
+          set -e
+
+          if docker container inspect networksecurity >/dev/null 2>&1; then
+            echo "Stopping existing container..."
+            docker stop networksecurity
+
+            echo "Removing existing container..."
+            docker rm networksecurity
+          else
+            echo "No existing container found."
+          fi
 
       - name: Run Docker Container
         env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_REGION: ${{ secrets.AWS_REGION }}
         run: |
           set -e
 
+          if [ -z "$IMAGE_URI" ]; then
+            echo "ERROR: IMAGE_URI is empty."
+            exit 1
+          fi
+
           echo "Starting application container..."
+          echo "Using image: $IMAGE_URI"
 
           docker run -d \
             --restart unless-stopped \
             -p 8080:8080 \
             --ipc=host \
             --name networksecurity \
-            -e AWS_ACCESS_KEY_ID \
-            -e AWS_SECRET_ACCESS_KEY \
-            -e AWS_REGION \
-            
+            -e AWS_REGION="$AWS_REGION" \
             "$IMAGE_URI"
 
           echo "Container started successfully."
 
       - name: Verify Container
         run: |
+          set -e
+
+          sleep 5
+
+          if [ "$(docker inspect -f '{{.State.Running}}' networksecurity)" != "true" ]; then
+            echo "ERROR: Container is not running."
+            docker logs --tail 100 networksecurity
+            exit 1
+          fi
+
+          echo "Container is running successfully."
+
           docker ps --filter "name=networksecurity"
 
           echo "Recent container logs:"
